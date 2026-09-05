@@ -33,9 +33,8 @@ Restart ComfyUI completely after installation or update.
 
 ### Tagged release
 
-Download a tagged release archive from
-<https://github.com/svcBSV/imprintai-comfyui/releases>, verify the release
-against the committed `CHECKSUMS.sha256` file, and extract it to:
+Download a tagged source archive from
+<https://github.com/svcBSV/imprintai-comfyui/releases> and extract it to:
 
 ```text
 ComfyUI/custom_nodes/imprintai-comfyui/
@@ -44,6 +43,15 @@ ComfyUI/custom_nodes/imprintai-comfyui/
 The Python files must be directly inside that directory, not another nested
 folder. A versioned compatibility mirror remains at
 <https://imprintai.link/comfyui/> while existing direct links migrate.
+
+After extraction, verify the distributed source files from the package root:
+
+```bash
+sha256sum -c CHECKSUMS.sha256
+```
+
+`CHECKSUMS.sha256` covers the listed source and documentation files inside the
+release; it is not a checksum of GitHub's generated ZIP or tar archive.
 
 ## API key
 
