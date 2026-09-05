@@ -14,7 +14,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 
-NODE_PATH = pathlib.Path(__file__).parents[1] / "public" / "comfyui" / "imprint_nodes.py"
+NODE_PATH = pathlib.Path(__file__).parents[1] / "imprint_nodes.py"
 requests_stub = types.ModuleType("requests")
 requests_stub.exceptions = types.SimpleNamespace(
     RequestException=RuntimeError,
