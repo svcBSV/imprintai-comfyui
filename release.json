@@ -1,0 +1,11 @@
+{
+  "package": "imprintai-provenance",
+  "version": "1.0.0",
+  "repository": "https://github.com/svcBSV/imprintai-comfyui",
+  "releases": "https://github.com/svcBSV/imprintai-comfyui/releases",
+  "issues": "https://github.com/svcBSV/imprintai-comfyui/issues",
+  "registryStatus": "pending-publisher",
+  "registryUrl": null,
+  "compatibilityMirror": "https://imprintai.link/comfyui/",
+  "apiDefault": "https://imprintai.link"
+}
