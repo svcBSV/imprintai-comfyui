@@ -1,6 +1,6 @@
 [project]
 name = "imprintai-provenance"
-version = "1.0.0"
+version = "1.0.1"
 description = "Opt-in blockchain provenance and C2PA export nodes for ComfyUI"
 readme = "README.md"
 requires-python = ">=3.9"
