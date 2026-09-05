@@ -53,7 +53,7 @@ class ComfyNodeContractTests(unittest.TestCase):
         self.assertEqual(release["registryStatus"], "pending-publisher")
         self.assertEqual(
             pyproject["tool"]["comfy"]["PublisherId"],
-            "PUBLISHER_ID_REQUIRED",
+            "imprintai",
         )
 
     def test_log_node_derives_hashes_without_manual_hash_inputs(self):
