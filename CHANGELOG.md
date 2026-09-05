@@ -2,6 +2,13 @@
 
 All notable changes use semantic versioning.
 
+## 1.0.1
+
+- Added the complete Apache-2.0 licence text
+- Corrected extracted-source checksum instructions and release packaging
+- Published GitHub Actions definitions as inactive templates until repository
+  workflow permission is granted
+
 ## 1.0.0
 
 - Initial public package of the ImprintAI ComfyUI provenance nodes
