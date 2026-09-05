@@ -18,5 +18,5 @@ Documentation = "https://github.com/svcBSV/imprintai-comfyui#readme"
 [tool.comfy]
 # Replace only after creating the immutable publisher at registry.comfy.org.
 # The Registry release workflow refuses to publish while this guard remains.
-PublisherId = "PUBLISHER_ID_REQUIRED"
+PublisherId = "imprintai"
 DisplayName = "ImprintAI Provenance"
