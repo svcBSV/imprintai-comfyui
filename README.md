@@ -4,7 +4,7 @@ Opt-in ComfyUI nodes for recording AI-generation provenance with ImprintAI,
 embedding a confirmed Bitcoin SV transaction reference into an image, and
 exporting a labelled PNG with an optional C2PA manifest.
 
-**Version:** 1.0.0  
+**Version:** 1.0.1  
 **Default API:** <https://imprintai.link>  
 **Licence:** Apache-2.0
 
