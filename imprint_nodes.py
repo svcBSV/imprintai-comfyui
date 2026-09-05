@@ -25,7 +25,7 @@ import time
 from typing import Any, Optional, Tuple
 
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
 TXID_PATTERN = re.compile(r"^[a-fA-F0-9]{64}$")
 HASH_PATTERN = re.compile(r"^[a-fA-F0-9]{64}$")
