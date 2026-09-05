@@ -34,8 +34,8 @@ Restart ComfyUI completely after installation or update.
 ### Tagged release
 
 Download a tagged release archive from
-<https://github.com/svcBSV/imprintai-comfyui/releases>, verify its published
-SHA-256 checksum, and extract it to:
+<https://github.com/svcBSV/imprintai-comfyui/releases>, verify the release
+against the committed `CHECKSUMS.sha256` file, and extract it to:
 
 ```text
 ComfyUI/custom_nodes/imprintai-comfyui/
@@ -159,9 +159,13 @@ python -m unittest discover -s tests -p "test_*.py"
 python scripts/validate_distribution.py
 ```
 
-CI runs contract tests, validates Registry metadata, checks all public versions
-match, scans tracked files for common secret material, and builds release
-checksums. See [CONTRIBUTING.md](CONTRIBUTING.md).
+The repository contains ready-to-install workflow definitions for contract
+tests, Registry metadata validation, version matching, basic secret scanning,
+release archives, checksums, and official Registry publication. They remain
+templates until a repository administrator grants workflow-file permission and
+places them under `.github/workflows/`. See
+[workflow-templates](workflow-templates/) and
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Support and security
 
