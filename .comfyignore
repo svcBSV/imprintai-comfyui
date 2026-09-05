@@ -1,0 +1,10 @@
+.github/
+tests/
+examples/
+*.md
+CHANGELOG.md
+CONTRIBUTING.md
+SECURITY.md
+release.json
+__pycache__/
+*.pyc
