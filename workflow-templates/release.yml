@@ -24,7 +24,8 @@ jobs:
       - name: Build archive and checksum
         run: |
           mkdir -p dist/imprintai-comfyui
-          cp __init__.py imprint_nodes.py pyproject.toml requirements.txt README.md LICENSE CHANGELOG.md dist/imprintai-comfyui/
+          cp __init__.py imprint_nodes.py pyproject.toml requirements.txt README.md LICENSE CHANGELOG.md CONTRIBUTING.md SECURITY.md release.json CHECKSUMS.sha256 dist/imprintai-comfyui/
+          cp -R scripts workflow-templates dist/imprintai-comfyui/
           cd dist
           zip -r "imprintai-comfyui-${GITHUB_REF_NAME}.zip" imprintai-comfyui
           sha256sum "imprintai-comfyui-${GITHUB_REF_NAME}.zip" > "imprintai-comfyui-${GITHUB_REF_NAME}.sha256"
