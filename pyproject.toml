@@ -1,0 +1,22 @@
+[project]
+name = "imprintai-provenance"
+version = "1.0.0"
+description = "Opt-in blockchain provenance and C2PA export nodes for ComfyUI"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { file = "LICENSE" }
+dependencies = [
+  "requests>=2.31.0",
+  "Pillow>=10.0.0",
+]
+
+[project.urls]
+Repository = "https://github.com/svcBSV/imprintai-comfyui"
+Documentation = "https://github.com/svcBSV/imprintai-comfyui#readme"
+"Bug Tracker" = "https://github.com/svcBSV/imprintai-comfyui/issues"
+
+[tool.comfy]
+# Replace only after creating the immutable publisher at registry.comfy.org.
+# The Registry release workflow refuses to publish while this guard remains.
+PublisherId = "PUBLISHER_ID_REQUIRED"
+DisplayName = "ImprintAI Provenance"
