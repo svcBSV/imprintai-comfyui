@@ -43,7 +43,7 @@ class ComfyNodeContractTests(unittest.TestCase):
         pyproject = tomllib.loads((root / "pyproject.toml").read_text())
         release = json.loads((root / "release.json").read_text())
 
-        self.assertEqual(nodes.__version__, "1.0.1")
+        self.assertEqual(nodes.__version__, "1.1.0")
         self.assertEqual(pyproject["project"]["version"], nodes.__version__)
         self.assertEqual(release["version"], nodes.__version__)
         self.assertEqual(
