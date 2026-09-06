@@ -28,6 +28,8 @@ def main() -> int:
         raise ValueError("project and release package names differ")
     if project["urls"]["Repository"] != release["repository"]:
         raise ValueError("project and release repository URLs differ")
+    if "cryptography>=42.0.0" not in project["dependencies"]:
+        raise ValueError("prompt encryption requires the cryptography dependency")
     if release["registryStatus"] == "published":
         if comfy["PublisherId"] == "PUBLISHER_ID_REQUIRED":
             raise ValueError("published release cannot use publisher guard")

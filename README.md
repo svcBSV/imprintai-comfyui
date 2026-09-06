@@ -4,7 +4,7 @@ Opt-in ComfyUI nodes for recording AI-generation provenance with ImprintAI,
 embedding a confirmed Bitcoin SV transaction reference into an image, and
 exporting a labelled PNG with an optional C2PA manifest.
 
-**Version:** 1.0.1
+**Version:** 1.1.0
 **Default API:** <https://imprintai.link>  
 **Licence:** Apache-2.0
 
@@ -65,7 +65,8 @@ No node sends media or metadata when `enable_logging` is false. When logging or
 final export is enabled, the relevant metadata and image are sent to the
 configured API. ImprintAI processes uploaded media transiently; prompts and
 other submitted metadata may be retained and published unencrypted on a public
-blockchain. Omit private prompt text or submit an appropriate summary/hash.
+blockchain. Omit private prompt text, use prompt encryption below, or submit an
+appropriate summary/hash.
 
 ## Safe workflow
 
@@ -111,8 +112,34 @@ anchor metadata. It returns:
 - `canonical_pixel_hash`: LSB-invariant `icph1` hash of connected pixels
 - `input_summary_hash`: deterministic hash of supplied generation inputs
 
-The optional prompts and workflow JSON may become public. The exact-file hash
-is deliberately separate from the in-memory image hash.
+By default, optional prompts and workflow JSON may become public. The
+exact-file hash is deliberately separate from the in-memory image hash.
+
+#### Encrypting prompts locally
+
+**Encrypt prompts locally** on the Log Provenance node is opt-in and defaults
+to off for workflow compatibility. When enabled, raw `prompt` and
+`negative_prompt` are omitted from the request. Their canonical UTF-8 JSON is
+encrypted on this machine in an `imprint-prompt-enc-v1` envelope at the
+top-level `encryptedPrompts` request field; public model and generation
+settings can remain visible.
+
+Choose `passphrase` and supply a passphrase (or set
+`IMPRINT_PROMPT_PASSPHRASE`), or choose `local-key` and provide the path to a
+file containing exactly 32 raw bytes (or set `IMPRINT_PROMPT_KEY_PATH`). A
+base64-encoded 32-byte `IMPRINT_PROMPT_KEY` is also accepted when no key path
+is supplied. Keep the passphrase/key yourself: ImprintAI never receives it and
+cannot recover encrypted prompts. The node uses AES-256-GCM with a random DEK,
+separate random 12-byte content and wrapping IVs, and PBKDF2-SHA256 with
+310,000 iterations for passphrases.
+
+The encrypted prompt JSON is conservatively limited to 4096 UTF-8 bytes and
+the complete canonical envelope to 8192 bytes. In encrypted mode, workflow
+metadata containing nested prompt/negative-prompt field names is rejected
+rather than risking a plaintext leak. Its
+`inputFingerprint` is calculated locally as SHA-256 of a random salt plus
+canonical plaintext; it is not a plaintext fallback or a decryptable copy.
+The input-summary hash is also calculated locally with this random salt.
 
 ### Imprint - Label Image
 

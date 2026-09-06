@@ -22,10 +22,21 @@ import math
 import re
 import io
 import time
+import base64
+import binascii
 from typing import Any, Optional, Tuple
 
+try:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    from cryptography.hazmat.primitives.hashes import SHA256
+    from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+except ImportError:
+    AESGCM = None
+    SHA256 = None
+    PBKDF2HMAC = None
 
-__version__ = "1.0.1"
+
+__version__ = "1.1.0"
 
 TXID_PATTERN = re.compile(r"^[a-fA-F0-9]{64}$")
 HASH_PATTERN = re.compile(r"^[a-fA-F0-9]{64}$")
@@ -34,6 +45,14 @@ SUPPORTED_STEGO_METHODS = {"imprint-stego-v1", "imprint-stego-v3"}
 STATUS_POLL_TIMEOUT_SECONDS = 105.0
 STATUS_POLL_INITIAL_DELAY_SECONDS = 1.0
 STATUS_POLL_MAX_DELAY_SECONDS = 8.0
+PROMPT_ENCRYPTION_PROTOCOL = "imprint-prompt-enc-v1"
+PROMPT_ENCRYPTION_ALGORITHM = "A256GCM"
+PROMPT_ENCRYPTION_ITERATIONS = 310000
+PROMPT_PLAINTEXT_MAX_BYTES = 4096
+PROMPT_ENVELOPE_MAX_BYTES = 8192
+PROTECTED_PROMPT_METADATA_KEYS = {
+    "prompt", "negativePrompt", "positive_prompt", "negative_prompt",
+}
 
 
 def _is_sha256(value: str) -> bool:
@@ -149,6 +168,7 @@ def _input_summary_hash(
     negative_prompt: str,
     media_type: str,
     workflow_inputs: Optional[Any],
+    salt: Optional[bytes] = None,
 ) -> str:
     """Create a deterministic, domain-separated summary of workflow inputs."""
     summary = {
@@ -163,9 +183,166 @@ def _input_summary_hash(
     canonical_json = json.dumps(
         summary, sort_keys=True, separators=(",", ":"), ensure_ascii=False
     )
-    return hashlib.sha256(
-        b"imprint-input-summary-v1:" + canonical_json.encode("utf-8")
-    ).hexdigest()
+    prefix = b"imprint-input-summary-v1:"
+    if salt is not None:
+        prefix += salt + b":"
+    return hashlib.sha256(prefix + canonical_json.encode("utf-8")).hexdigest()
+
+
+def _canonical_json(value: Any) -> bytes:
+    """Encode protocol JSON deterministically for encryption and authenticated data."""
+    return json.dumps(
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+
+
+def _base64(value: bytes) -> str:
+    return base64.b64encode(value).decode("ascii")
+
+
+def _prompt_encryption_aad(kdf: dict) -> bytes:
+    """Canonical AAD shared with shared/promptEncryption.ts."""
+    return _canonical_json({
+        "alg": PROMPT_ENCRYPTION_ALGORITHM,
+        "kdf": kdf,
+        "protocol": PROMPT_ENCRYPTION_PROTOCOL,
+    })
+
+
+def _validate_generated_prompt_envelope(envelope: Any) -> None:
+    """Reject malformed or oversized locally-built protocol envelopes."""
+    if not isinstance(envelope, dict) or set(envelope) != {
+        "protocol", "alg", "kdf", "wrap", "iv", "ciphertext", "inputFingerprint",
+    }:
+        raise ValueError("Generated prompt envelope has an invalid protocol shape.")
+    kdf = envelope["kdf"]
+    if not isinstance(kdf, dict) or not (
+        (kdf.get("name") == "PBKDF2-SHA256"
+         and set(kdf) == {"name", "iterations", "salt"}
+         and kdf["iterations"] == PROMPT_ENCRYPTION_ITERATIONS)
+        or (kdf.get("name") == "raw-32" and set(kdf) == {"name"})
+    ):
+        raise ValueError("Generated prompt envelope has an invalid KDF shape.")
+    if (
+        envelope["protocol"] != PROMPT_ENCRYPTION_PROTOCOL
+        or envelope["alg"] != PROMPT_ENCRYPTION_ALGORITHM
+        or not isinstance(envelope["wrap"], dict)
+        or set(envelope["wrap"]) != {"alg", "iv", "ciphertext"}
+        or envelope["wrap"]["alg"] != PROMPT_ENCRYPTION_ALGORITHM
+        or not isinstance(envelope["inputFingerprint"], dict)
+        or set(envelope["inputFingerprint"]) != {"alg", "salt", "value"}
+        or envelope["inputFingerprint"]["alg"] != "SHA-256"
+    ):
+        raise ValueError("Generated prompt envelope has invalid protocol fields.")
+    if len(_canonical_json(envelope)) > PROMPT_ENVELOPE_MAX_BYTES:
+        raise ValueError("Encrypted prompt envelope exceeds the 8192-byte limit.")
+
+
+def _contains_protected_prompt_metadata(value: Any) -> bool:
+    """Detect recursive settings keys that would bypass encrypted prompt fields."""
+    if isinstance(value, dict):
+        return any(
+            key in PROTECTED_PROMPT_METADATA_KEYS
+            or _contains_protected_prompt_metadata(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, list):
+        return any(_contains_protected_prompt_metadata(item) for item in value)
+    return False
+
+
+def _resolve_local_prompt_key(key_path: str) -> bytes:
+    """Load a portable raw 32-byte local key without ever reporting its contents."""
+    path = (key_path or os.getenv("IMPRINT_PROMPT_KEY_PATH", "")).strip()
+    if path:
+        try:
+            with open(path, "rb") as key_file:
+                key = key_file.read()
+        except OSError as error:
+            raise ValueError("Unable to read the local prompt key file.") from error
+    else:
+        encoded_key = os.getenv("IMPRINT_PROMPT_KEY", "").strip()
+        if not encoded_key:
+            raise ValueError(
+                "A 32-byte local key file/path or IMPRINT_PROMPT_KEY is required."
+            )
+        try:
+            key = base64.b64decode(encoded_key, validate=True)
+        except (ValueError, binascii.Error) as error:
+            raise ValueError("IMPRINT_PROMPT_KEY must be base64-encoded 32-byte data.") from error
+    if len(key) != 32:
+        raise ValueError("The local prompt key must contain exactly 32 bytes.")
+    return key
+
+
+def _encrypt_prompts(
+    prompt: str,
+    negative_prompt: str,
+    method: str,
+    passphrase: str = "",
+    key_path: str = "",
+) -> Tuple[dict, bytes]:
+    """Create an imprint-prompt-enc-v1 envelope and return its summary salt."""
+    if AESGCM is None or PBKDF2HMAC is None or SHA256 is None:
+        raise ValueError("Prompt encryption requires the cryptography package.")
+
+    plaintext = {}
+    if prompt:
+        plaintext["prompt"] = prompt
+    if negative_prompt:
+        plaintext["negativePrompt"] = negative_prompt
+    plaintext_bytes = _canonical_json(plaintext)
+    if not plaintext:
+        raise ValueError("At least one of prompt or negative_prompt is required.")
+    if len(plaintext_bytes) > PROMPT_PLAINTEXT_MAX_BYTES:
+        raise ValueError("Encrypted prompt text exceeds the 4096-byte UTF-8 limit.")
+
+    if method == "passphrase":
+        resolved_passphrase = passphrase or os.getenv("IMPRINT_PROMPT_PASSPHRASE", "")
+        if not resolved_passphrase:
+            raise ValueError(
+                "A prompt encryption passphrase or IMPRINT_PROMPT_PASSPHRASE is required."
+            )
+        kdf = {
+            "name": "PBKDF2-SHA256",
+            "iterations": PROMPT_ENCRYPTION_ITERATIONS,
+            "salt": _base64(os.urandom(16)),
+        }
+        kek = PBKDF2HMAC(
+            algorithm=SHA256(), length=32, salt=base64.b64decode(kdf["salt"]),
+            iterations=PROMPT_ENCRYPTION_ITERATIONS,
+        ).derive(resolved_passphrase.encode("utf-8"))
+    elif method == "local-key":
+        kek = _resolve_local_prompt_key(key_path)
+        kdf = {"name": "raw-32"}
+    else:
+        raise ValueError("Prompt encryption method must be passphrase or local-key.")
+
+    aad = _prompt_encryption_aad(kdf)
+    dek = os.urandom(32)
+    wrap_iv = os.urandom(12)
+    content_iv = os.urandom(12)
+    fingerprint_salt = os.urandom(16)
+    wrap = {
+        "alg": PROMPT_ENCRYPTION_ALGORITHM,
+        "iv": _base64(wrap_iv),
+        "ciphertext": _base64(AESGCM(kek).encrypt(wrap_iv, dek, aad)),
+    }
+    envelope = {
+        "protocol": PROMPT_ENCRYPTION_PROTOCOL,
+        "alg": PROMPT_ENCRYPTION_ALGORITHM,
+        "kdf": kdf,
+        "wrap": wrap,
+        "iv": _base64(content_iv),
+        "ciphertext": _base64(AESGCM(dek).encrypt(content_iv, plaintext_bytes, aad)),
+        "inputFingerprint": {
+            "alg": "SHA-256",
+            "salt": _base64(fingerprint_salt),
+            "value": _base64(hashlib.sha256(fingerprint_salt + plaintext_bytes).digest()),
+        },
+    }
+    _validate_generated_prompt_envelope(envelope)
+    return envelope, fingerprint_salt
 
 
 def _single_image_to_rgba(image) -> Tuple[int, int, bytearray, int]:
@@ -908,6 +1085,21 @@ class ImprintLog:
                 # it must point to the exact bytes emitted by an encoder.
                 "output_file_path": ("STRING", {"default": "", "multiline": False}),
                 "workflow_inputs_json": ("STRING", {"default": "", "multiline": True}),
+                "encrypt_prompts": (
+                    "BOOLEAN",
+                    {
+                        "default": False,
+                        "label_on": "Encrypt prompts locally",
+                        "label_off": "Send prompts as entered",
+                    },
+                ),
+                "prompt_encryption_method": (["passphrase", "local-key"],),
+                "prompt_encryption_passphrase": (
+                    "STRING", {"default": "", "multiline": False}
+                ),
+                "prompt_encryption_key_path": (
+                    "STRING", {"default": "", "multiline": False}
+                ),
                 "type": (["image_generation", "video_generation", "image_edit", "upscale", "custom"],),
                 "api_url": ("STRING", {"default": "https://imprintai.link", "multiline": False}),
             }
@@ -940,6 +1132,10 @@ class ImprintLog:
         canonical_pixel_hash: str = "",
         input_summary_hash: str = "",
         workflow_inputs_json: str = "",
+        encrypt_prompts: bool = False,
+        prompt_encryption_method: str = "passphrase",
+        prompt_encryption_passphrase: str = "",
+        prompt_encryption_key_path: str = "",
         type: str = "image_generation",
         api_url: str = "https://imprintai.link"
     ) -> Tuple[str, bool, str, str, str]:
@@ -949,8 +1145,22 @@ class ImprintLog:
         which must name the exact already-encoded file bytes. The IMAGE tensor
         is never substituted as an exact-file hash.
         """
+        encrypted_prompts = None
+        summary_salt = None
         try:
             workflow_inputs = _normalise_workflow_inputs(workflow_inputs_json)
+            if encrypt_prompts:
+                if _contains_protected_prompt_metadata(workflow_inputs):
+                    raise ValueError(
+                        "Encrypted prompt mode cannot include prompt fields in workflow metadata."
+                    )
+                encrypted_prompts, summary_salt = _encrypt_prompts(
+                    prompt,
+                    negative_prompt,
+                    prompt_encryption_method,
+                    prompt_encryption_passphrase,
+                    prompt_encryption_key_path,
+                )
             derived_input_hash = _input_summary_hash(
                 model,
                 model_version,
@@ -958,12 +1168,18 @@ class ImprintLog:
                 negative_prompt,
                 type,
                 workflow_inputs,
+                summary_salt,
             )
         except ValueError as error:
             print(f"[Imprint] Error: {error}")
             return ("", False, "", "", "")
 
-        resolved_input_hash = input_summary_hash.strip().lower() or derived_input_hash
+        # An encrypted request must use the locally-derived salted summary,
+        # never a caller-provided value that could be an unsalted substitute.
+        resolved_input_hash = (
+            derived_input_hash if encrypt_prompts
+            else input_summary_hash.strip().lower() or derived_input_hash
+        )
         if not _is_sha256(resolved_input_hash):
             print("[Imprint] Error: input_summary_hash must be a 64-character SHA-256 hex value")
             return ("", False, "", "", "")
@@ -1039,9 +1255,9 @@ class ImprintLog:
             "type": type,
         }
         
-        if prompt:
+        if prompt and not encrypt_prompts:
             payload["prompt"] = prompt
-        if negative_prompt:
+        if negative_prompt and not encrypt_prompts:
             payload["negative_prompt"] = negative_prompt
         if model_version:
             payload["model_version"] = model_version
@@ -1058,6 +1274,8 @@ class ImprintLog:
                   "record will not carry a media fingerprint. Recommended: "
                   "sha256 of the exact saved image bytes (pre-embed).")
         payload["input_summary_hash"] = resolved_input_hash
+        if encrypted_prompts is not None:
+            payload["encryptedPrompts"] = encrypted_prompts
         if workflow_inputs is not None:
             payload["settings"] = workflow_inputs
         

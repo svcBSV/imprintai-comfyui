@@ -2,6 +2,13 @@
 
 All notable changes use semantic versioning.
 
+## 1.1.0
+
+- Added opt-in `imprint-prompt-enc-v1` prompt encryption using AES-256-GCM,
+  PBKDF2-SHA256 passphrases, or a portable raw 32-byte local key file
+- Added local salted input-summary hashes and prompt-size limits so encryption
+  never falls back to plaintext
+
 ## 1.0.1
 
 - Added the complete Apache-2.0 licence text
