@@ -16,9 +16,10 @@ private operational configuration are not included.
 
 ### ComfyUI Manager
 
-Registry publication is pending creation of the immutable ImprintAI publisher
-identity. Until the Registry listing is live, use one of the manual methods
-below. Do not trust an unofficial package using a similar name.
+The immutable `imprintai` publisher identity is configured, but Registry
+publication is still pending. Until the official listing is live, use one of
+the manual methods below. Do not trust an unofficial package using a similar
+name.
 
 ### Git
 

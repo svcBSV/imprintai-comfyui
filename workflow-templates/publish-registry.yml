@@ -14,7 +14,7 @@ jobs:
       - name: Require configured publisher
         run: |
           if grep -q 'PublisherId = "PUBLISHER_ID_REQUIRED"' pyproject.toml; then
-            echo "Create the immutable Registry publisher and update PublisherId first."
+            echo "Configure the immutable Registry publisher ID first."
             exit 1
           fi
       - uses: Comfy-Org/publish-node-action@main

@@ -7,6 +7,6 @@ administrator authorizes workflow-file changes:
 - `release.yml` builds tagged ZIP archives and SHA-256 files
 - `publish-registry.yml` publishes manually through the official Comfy action
 
-Registry publication also requires replacing `PUBLISHER_ID_REQUIRED` in
-`pyproject.toml` and adding `REGISTRY_ACCESS_TOKEN` as a GitHub Actions secret.
-Never commit that token.
+Registry publication requires adding `REGISTRY_ACCESS_TOKEN` as a GitHub
+Actions secret for the configured immutable `imprintai` publisher. Never
+commit that token.

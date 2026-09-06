@@ -41,8 +41,8 @@ def main() -> int:
         raise ValueError(f"missing required files: {missing}")
 
     print(f"Validated {project['name']} {project['version']}")
-    if comfy["PublisherId"] == "PUBLISHER_ID_REQUIRED":
-        print("Registry publication is guarded until a publisher ID is configured.")
+    if release["registryStatus"] != "published":
+        print("Registry publication is still pending.")
     return 0
 
 
