@@ -16,10 +16,16 @@ private operational configuration are not included.
 
 ### ComfyUI Manager
 
-The immutable `imprintai` publisher identity is configured, but Registry
-publication is still pending. Until the official listing is live, use one of
-the manual methods below. Do not trust an unofficial package using a similar
-name.
+Install **ImprintAI Provenance** from ComfyUI Manager. The official
+[Comfy Registry listing](https://registry.comfy.org/nodes/imprintai-provenance)
+is active under the immutable `imprintai` publisher identity and installs from
+the public `svcBSV/imprintai-comfyui` repository. The Manager installation has
+been verified with the nodes loading and connecting to the ImprintAI API.
+
+The Registry does not currently expose a downloadable packaged version, so
+Manager uses the repository installation path. Git and tagged releases remain
+available below as manual alternatives. Do not trust an unofficial package
+using a similar name.
 
 ### Git
 
@@ -195,12 +201,10 @@ python -m unittest discover -s tests -p "test_*.py"
 python scripts/validate_distribution.py
 ```
 
-The repository contains ready-to-install workflow definitions for contract
-tests, Registry metadata validation, version matching, basic secret scanning,
-release archives, checksums, and official Registry publication. They remain
-templates until a repository administrator grants workflow-file permission and
-places them under `.github/workflows/`. See
-[workflow-templates](workflow-templates/) and
+The repository runs GitHub Actions workflows for contract tests, Registry
+metadata validation, version matching, basic secret scanning, release archives,
+checksums, publication, and Registry activation verification. Reference copies
+remain in [workflow-templates](workflow-templates/). See
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Support and security

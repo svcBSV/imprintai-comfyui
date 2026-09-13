@@ -50,7 +50,7 @@ class ComfyNodeContractTests(unittest.TestCase):
             pyproject["project"]["urls"]["Repository"],
             release["repository"],
         )
-        self.assertEqual(release["registryStatus"], "pending-publication")
+        self.assertEqual(release["registryStatus"], "published")
         self.assertEqual(
             pyproject["tool"]["comfy"]["PublisherId"],
             "imprintai",

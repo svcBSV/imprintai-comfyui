@@ -4,8 +4,8 @@
   "repository": "https://github.com/svcBSV/imprintai-comfyui",
   "releases": "https://github.com/svcBSV/imprintai-comfyui/releases",
   "issues": "https://github.com/svcBSV/imprintai-comfyui/issues",
-  "registryStatus": "pending-publication",
-  "registryUrl": null,
+  "registryStatus": "published",
+  "registryUrl": "https://registry.comfy.org/nodes/imprintai-provenance",
   "compatibilityMirror": "https://imprintai.link/comfyui/",
   "apiDefault": "https://imprintai.link"
 }
