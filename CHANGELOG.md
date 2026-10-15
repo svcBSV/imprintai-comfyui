@@ -2,6 +2,15 @@
 
 All notable changes use semantic versioning.
 
+## 1.2.0
+
+- Added explicit sparse-safe V4 to Label Image and Export Labelled PNG (+ C2PA)
+- Preserved V1 defaults and frozen V3 compatibility; V4 never silently replaces V3
+- Enforced V4's 512 × 512 minimum, maximum 32 unsafe skipped cells and ten safe
+  copies of each pilot/payload bit; unsafe cells remain untouched
+- Documented API selection, reference-only verification and transformation limits
+- Updated Pillow minimum to 12.3.0 and clarified Registry versus mirror versions
+
 ## 1.1.0
 
 - Added opt-in `imprint-prompt-enc-v1` prompt encryption using AES-256-GCM,

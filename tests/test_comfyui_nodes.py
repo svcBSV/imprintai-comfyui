@@ -11,6 +11,8 @@ import sys
 import tempfile
 import types
 import unittest
+import base64
+import tomllib
 from unittest.mock import Mock, patch
 
 
@@ -37,6 +39,24 @@ class Response:
 
 
 class ComfyNodeContractTests(unittest.TestCase):
+    def test_public_distribution_versions_and_repository_match(self):
+        root = NODE_PATH.parent
+        pyproject = tomllib.loads((root / "pyproject.toml").read_text())
+        release = json.loads((root / "release.json").read_text())
+
+        self.assertEqual(nodes.__version__, "1.2.0")
+        self.assertEqual(pyproject["project"]["version"], nodes.__version__)
+        self.assertEqual(release["version"], nodes.__version__)
+        self.assertEqual(
+            pyproject["project"]["urls"]["Repository"],
+            release["repository"],
+        )
+        self.assertEqual(release["registryStatus"], "release-pending")
+        self.assertEqual(
+            pyproject["tool"]["comfy"]["PublisherId"],
+            "imprintai",
+        )
+
     def test_log_node_derives_hashes_without_manual_hash_inputs(self):
         inputs = nodes.ImprintLog.INPUT_TYPES()
         optional_inputs = inputs["optional"]
@@ -180,6 +200,164 @@ class ComfyNodeContractTests(unittest.TestCase):
         self.assertEqual(canonical_hash, "")
         self.assertRegex(input_hash, r"^[a-f0-9]{64}$")
 
+    @unittest.skipIf(
+        nodes.AESGCM is None, "cryptography is required for prompt encryption tests"
+    )
+    def test_prompt_encryption_envelope_round_trip_has_protocol_fields(self):
+        """Fixed randomness gives a portable helper-level protocol vector."""
+        random_values = [
+            b"\x01" * 16, b"\x02" * 32, b"\x03" * 12,
+            b"\x04" * 12, b"\x05" * 16,
+        ]
+        with patch.object(nodes.os, "urandom", side_effect=random_values):
+            envelope, summary_salt = nodes._encrypt_prompts(
+                "a river at dusk", "low quality", "passphrase", "test passphrase"
+            )
+
+        self.assertEqual(envelope["protocol"], "imprint-prompt-enc-v1")
+        self.assertEqual(envelope["alg"], "A256GCM")
+        self.assertEqual(envelope["kdf"]["name"], "PBKDF2-SHA256")
+        self.assertEqual(envelope["kdf"]["salt"], "AQEBAQEBAQEBAQEBAQEBAQ==")
+        self.assertEqual(envelope["kdf"]["iterations"], 310000)
+        self.assertEqual(envelope["iv"], "BAQEBAQEBAQEBAQE")
+        self.assertEqual(envelope["wrap"]["iv"], "AwMDAwMDAwMDAwMD")
+        self.assertEqual(summary_salt, b"\x05" * 16)
+        self.assertEqual(
+            envelope["wrap"]["ciphertext"],
+            "7/JOro2T2cJaPyWn5gHcwuQWbjVP2P7MK8+iu2ycabo/K6ko5dvaK8Iqkja+RdxQ",
+        )
+        self.assertEqual(
+            envelope["ciphertext"],
+            "f26/a5kq5DPrO4eS2S5p0jmI+6XtXLsKy6NUsL/CK/UQzkROoANmezTrxxWSN5qM04psxtpwZIdAF1gTDVSnhnaLQWoLUOuS+Kul",
+        )
+        self.assertEqual(envelope["inputFingerprint"], {
+            "alg": "SHA-256",
+            "salt": "BQUFBQUFBQUFBQUFBQUFBQ==",
+            "value": "gQbLAWNQbeSeDpzMwjbOMeOc+TV614XYT5BkbWbUU0A=",
+        })
+
+        # Independently unwrap/decrypt with the documented canonical AAD.
+        kdf = nodes.PBKDF2HMAC(
+            algorithm=nodes.SHA256(), length=32,
+            salt=base64.b64decode(envelope["kdf"]["salt"]), iterations=310000
+        )
+        kek = kdf.derive(b"test passphrase")
+        aad = json.dumps({
+            "alg": "A256GCM", "kdf": envelope["kdf"],
+            "protocol": "imprint-prompt-enc-v1",
+        }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        dek = nodes.AESGCM(kek).decrypt(
+            base64.b64decode(envelope["wrap"]["iv"]),
+            base64.b64decode(envelope["wrap"]["ciphertext"]),
+            aad,
+        )
+        plaintext = nodes.AESGCM(dek).decrypt(
+            base64.b64decode(envelope["iv"]),
+            base64.b64decode(envelope["ciphertext"]),
+            aad,
+        )
+        self.assertEqual(
+            plaintext,
+            b'{"negativePrompt":"low quality","prompt":"a river at dusk"}',
+        )
+
+    def test_prompt_envelope_shape_and_size_are_enforced(self):
+        envelope = {
+            "protocol": "imprint-prompt-enc-v1",
+            "alg": "A256GCM",
+            "kdf": {"name": "raw-32"},
+            "wrap": {"alg": "A256GCM", "iv": "a", "ciphertext": "b"},
+            "iv": "c",
+            "ciphertext": "x" * 8192,
+            "inputFingerprint": {"alg": "SHA-256", "salt": "d", "value": "e"},
+        }
+        with self.assertRaisesRegex(ValueError, "8192-byte"):
+            nodes._validate_generated_prompt_envelope(envelope)
+        envelope["ciphertext"] = "x"
+        nodes._validate_generated_prompt_envelope(envelope)
+        envelope["unexpected"] = True
+        with self.assertRaisesRegex(ValueError, "protocol shape"):
+            nodes._validate_generated_prompt_envelope(envelope)
+
+    def test_encrypted_mode_rejects_nested_prompt_workflow_metadata(self):
+        with patch.object(nodes.requests, "post") as post:
+            result = nodes.ImprintLog().log_metadata(
+                model="SDXL",
+                api_key="key",
+                prompt="confidential prompt",
+                encrypt_prompts=True,
+                prompt_encryption_method="passphrase",
+                prompt_encryption_passphrase="passphrase",
+                workflow_inputs_json='{"sampler":{"negative_prompt":"leak"}}',
+            )
+        post.assert_not_called()
+        self.assertEqual(result, ("", False, "", "", ""))
+
+    @unittest.skipIf(
+        nodes.AESGCM is None, "cryptography is required for prompt encryption tests"
+    )
+    def test_prompt_encryption_multibyte_plaintext_boundary(self):
+        # 2030 two-byte code points plus JSON framing remains below 4096 bytes.
+        nodes._encrypt_prompts("é" * 2030, "", "passphrase", "passphrase")
+        with self.assertRaisesRegex(ValueError, "4096-byte"):
+            nodes._encrypt_prompts("é" * 2048, "", "passphrase", "passphrase")
+
+    @unittest.skipIf(
+        nodes.AESGCM is None, "cryptography is required for prompt encryption tests"
+    )
+    def test_encrypted_prompt_request_never_contains_plaintext(self):
+        captured = {}
+
+        def capture_post(_url, json=None, **_kwargs):
+            captured["payload"] = json
+            return Response({"success": True, "txid": "a" * 64})
+
+        with patch.object(nodes.requests, "post", side_effect=capture_post):
+            txid, ready, _, _, input_hash = nodes.ImprintLog().log_metadata(
+                model="SDXL",
+                api_key="key",
+                prompt="confidential prompt",
+                negative_prompt="private negative",
+                encrypt_prompts=True,
+                prompt_encryption_method="passphrase",
+                prompt_encryption_passphrase="correct horse battery staple",
+            )
+        self.assertEqual(txid, "a" * 64)
+        self.assertTrue(ready)
+        self.assertRegex(input_hash, r"^[a-f0-9]{64}$")
+        encoded = json.dumps(captured["payload"])
+        self.assertNotIn("confidential prompt", encoded)
+        self.assertNotIn("private negative", encoded)
+        self.assertNotIn("prompt", captured["payload"])
+        self.assertNotIn("negative_prompt", captured["payload"])
+        envelope = captured["payload"]["encryptedPrompts"]
+        self.assertEqual(envelope["kdf"]["name"], "PBKDF2-SHA256")
+
+    def test_prompt_encryption_refuses_missing_key_without_request(self):
+        with patch.object(nodes.requests, "post") as post:
+            result = nodes.ImprintLog().log_metadata(
+                model="SDXL",
+                api_key="key",
+                prompt="never upload this",
+                encrypt_prompts=True,
+                prompt_encryption_method="passphrase",
+            )
+        post.assert_not_called()
+        self.assertEqual(result, ("", False, "", "", ""))
+
+    def test_prompt_encryption_enforces_utf8_byte_limit_without_request(self):
+        with patch.object(nodes.requests, "post") as post:
+            result = nodes.ImprintLog().log_metadata(
+                model="SDXL",
+                api_key="key",
+                prompt="é" * 3000,
+                encrypt_prompts=True,
+                prompt_encryption_method="passphrase",
+                prompt_encryption_passphrase="passphrase",
+            )
+        post.assert_not_called()
+        self.assertEqual(result, ("", False, "", "", ""))
+
     def test_mock_response_is_not_eligible_for_labelling(self):
         response = Response({"success": True, "txid": "b" * 64, "mock": True})
         with patch.object(nodes.requests, "post", return_value=response):
@@ -292,8 +470,8 @@ class ComfyNodeContractTests(unittest.TestCase):
     def test_v2_is_not_offered_or_accepted(self):
         methods = nodes.ImprintLabel.INPUT_TYPES()["optional"]["stego_method"][0]
         export_methods = nodes.ImprintExportC2paPng.INPUT_TYPES()["optional"]["stego_method"][0]
-        self.assertEqual(methods, ["imprint-stego-v1", "imprint-stego-v3"])
-        self.assertEqual(export_methods, ["imprint-stego-v1", "imprint-stego-v3"])
+        self.assertEqual(methods, ["imprint-stego-v1", "imprint-stego-v3", "imprint-stego-v4"])
+        self.assertEqual(export_methods, ["imprint-stego-v1", "imprint-stego-v3", "imprint-stego-v4"])
         self.assertNotIn("imprint-stego-v2", methods)
         self.assertNotIn("imprint-stego-v2", export_methods)
         original_image = object()
@@ -360,6 +538,44 @@ class ComfyNodeContractTests(unittest.TestCase):
         error = nodes._check_v3_carrier(rgba, width, height)
         self.assertIsNotNone(error)
         self.assertIn("512", error)
+
+    def test_sparse_safe_v4_label_and_export_preflight(self):
+        width = height = 768
+        rgba = bytearray()
+        for y in range(height):
+            for x in range(width):
+                v = 100 + (x % 31) + (y % 23)
+                rgba += bytes([v, v + 10, v + 20, 255])
+        # One fixed cell is intentionally unsuitable; it must stay untouched.
+        tile = nodes._v3_tile_for_replica(33, 7, 11)
+        x0, x1, y0, y1 = nodes._v3_cell_rect(width, height, tile)
+        for y in range(y0, y1):
+            for x in range(x0, x1):
+                off = (y * width + x) * 4
+                rgba[off:off + 3] = bytes([128] * 3)
+        self.assertIsNone(nodes._check_v4_carrier(rgba, width, height))
+        original = bytes(rgba)
+        with patch.object(nodes, "_single_image_to_rgba", return_value=(width, height, rgba, 3)), patch.object(
+            nodes, "_rgba_to_single_image", return_value="v4-output"
+        ):
+            output, labelled = nodes.ImprintLabel().embed_txid(
+                object(), "a1b2c3d4" * 8, True, stego_method="imprint-stego-v4"
+            )
+        self.assertTrue(labelled)
+        self.assertEqual(output, "v4-output")
+        self.assertLessEqual(max(abs(rgba[i] - original[i]) for i in range(len(rgba))), 7)
+        for y in range(y0, y1):
+            for x in range(x0, x1):
+                off = (y * width + x) * 4
+                self.assertEqual(rgba[off:off + 4], original[off:off + 4])
+        smooth = bytearray([128, 128, 128, 255] * width * height)
+        with patch.object(nodes, "_single_image_to_rgba", return_value=(width, height, smooth, 3)), patch.object(nodes.requests, "post") as post:
+            path, exported, status = nodes.ImprintExportC2paPng().export_png(
+                object(), "offline-only", "a" * 64, True, stego_method="imprint-stego-v4"
+            )
+        post.assert_not_called()
+        self.assertFalse(exported)
+        self.assertEqual(path, "")
 
     def test_invisible_v3_preflight_accepts_textured_carrier(self):
         width, height = 768, 768

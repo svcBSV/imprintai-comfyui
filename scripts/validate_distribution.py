@@ -30,24 +30,19 @@ def main() -> int:
         raise ValueError("project and release repository URLs differ")
     if "cryptography>=42.0.0" not in project["dependencies"]:
         raise ValueError("prompt encryption requires the cryptography dependency")
-    submitted_statuses = {"pending-review", "published"}
-    if release["registryStatus"] in submitted_statuses:
+    if release["registryStatus"] == "published":
         if comfy["PublisherId"] == "PUBLISHER_ID_REQUIRED":
-            raise ValueError("submitted release cannot use publisher guard")
+            raise ValueError("published release cannot use publisher guard")
         if not release["registryUrl"]:
-            raise ValueError("submitted release requires registryUrl")
+            raise ValueError("published release requires registryUrl")
     required = {"imprint_nodes.py", "__init__.py", "README.md", "LICENSE"}
     missing = sorted(path for path in required if not (ROOT / path).is_file())
     if missing:
         raise ValueError(f"missing required files: {missing}")
 
     print(f"Validated {project['name']} {project['version']}")
-    if release["registryStatus"] == "pending-publication":
+    if release["registryStatus"] != "published":
         print("Registry publication is still pending.")
-    elif release["registryStatus"] == "pending-review":
-        print("Registry release is submitted and awaiting activation.")
-    elif release["registryStatus"] == "published":
-        print("Registry listing is published.")
     return 0
 
 
