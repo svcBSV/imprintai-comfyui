@@ -4,7 +4,7 @@ Opt-in ComfyUI nodes for recording AI-generation provenance with ImprintAI,
 embedding a confirmed Bitcoin SV transaction reference into an image, and
 exporting a labelled PNG with an optional C2PA manifest.
 
-**Version:** 1.1.0
+**Version:** 1.2.0
 **Default API:** <https://imprintai.link>  
 **Licence:** Apache-2.0
 
@@ -14,18 +14,19 @@ private operational configuration are not included.
 
 ## Installation
 
+Requires Python 3.10 or newer and Pillow 12.3.0 or newer. Older Pillow
+releases have known image-decoding and PDF-processing security vulnerabilities.
+
 ### ComfyUI Manager
 
-Install **ImprintAI Provenance** from ComfyUI Manager. The official
-[Comfy Registry listing](https://registry.comfy.org/nodes/imprintai-provenance)
-is active under the immutable `imprintai` publisher identity and installs from
-the public `svcBSV/imprintai-comfyui` repository. The Manager installation has
-been verified with the nodes loading and connecting to the ImprintAI API.
-
-The Registry does not currently expose a downloadable packaged version, so
-Manager uses the repository installation path. Git and tagged releases remain
-available below as manual alternatives. Do not trust an unofficial package
-using a similar name.
+The official listing is
+<https://registry.comfy.org/publishers/imprintai/nodes/imprintai-provenance>
+under publisher `imprintai`. V4 requires this package's 1.2.0 release or newer.
+Registry publication is separate from this source package: at release
+preparation the Registry still listed 1.1.0 with `NodeVersionStatusFlagged`.
+Check the live listing and do not treat an older or flagged release as V4-ready.
+Until an approved 1.2.0-or-newer release is available in Manager, use the
+compatibility mirror or an explicitly V4-capable GitHub release.
 
 ### Git
 
@@ -152,12 +153,37 @@ The input-summary hash is also calculated locally with this random salt.
 
 Embeds a confirmed reference into an IMAGE tensor for stego-only workflows.
 `imprint-stego-v1` authenticates the original canonical pixels.
-`imprint-stego-v3` is transform-resistant and may recover the reference after
-common resizing/recompression, but does not prove transformed pixel equality.
+`imprint-stego-v3` and `imprint-stego-v4` are transform-resistant and may recover the reference after
+common resizing and recompression. V4 keeps the fixed eleven-vote map while
+leaving unsafe cells untouched, requiring ten safe cells per bit and at most
+32 skipped cells overall. Its distinct `IMV4` magic is not a V3 upgrade in place.
+Smooth or clipped images can still require V1. See `/spec/imprint-stego-v4.md`
+for the limits and the reference-only trust boundary. Neither robust format
+promises recovery after arbitrary transformations.
+
+Reference recovery does not prove transformed pixel equality.
 The legacy v2 method is decode-only and is not offered for new labels.
 
 Native Save Image may be used for this stego-only output, but it cannot
 preserve a C2PA manifest.
+
+### Select V4 explicitly
+
+1. Update to package 1.2.0 or newer and fully restart ComfyUI. Avoid duplicate
+   installations of the nodes.
+2. Connect `image`, the real anchored `txid`, and `anchor_ready` to **Label
+   Image** or **Export Labelled PNG (+ C2PA)**.
+3. Select `stego_method=imprint-stego-v4`; V1 remains the default.
+4. V4 requires at least 512 × 512 pixels, at most 32 skipped unsafe cells and
+   ten safe copies of every pilot/payload bit. Export runs this check before
+   upload. Existing-reference finalization never broadcasts a second transaction.
+5. Upload the PNG to <https://imprintai.link/decode> to recover and verify its
+   reference. Keep the dedicated exported file intact for C2PA inspection.
+
+Passing preflight is not a guarantee against compression, resizing, cropping
+or screenshots. No automatic V3-to-V4 upgrade or relaxed admission is provided.
+Use <https://imprintai.link/embed> transaction-free test mode to assess an image
+without broadcasting; those random test references are not real anchors.
 
 ### Imprint - Export Labelled PNG (+ C2PA)
 
@@ -179,7 +205,7 @@ Trust is verifier-dependent.
 
 Queries the public verification endpoint for a 64-hex transaction reference
 and returns the current assertion metadata. This verifies the service's chain
-record; exact-file v1 and transformed-copy v3 have different media claims as
+record; exact-file v1 and transformed-copy v3/v4 have different media claims as
 described above.
 
 ## Versioning and compatibility
@@ -201,10 +227,12 @@ python -m unittest discover -s tests -p "test_*.py"
 python scripts/validate_distribution.py
 ```
 
-The repository runs GitHub Actions workflows for contract tests, Registry
-metadata validation, version matching, basic secret scanning, release archives,
-checksums, publication, and Registry activation verification. Reference copies
-remain in [workflow-templates](workflow-templates/). See
+The repository contains ready-to-install workflow definitions for contract
+tests, Registry metadata validation, version matching, basic secret scanning,
+release archives, checksums, and official Registry publication. They remain
+templates until a repository administrator grants workflow-file permission and
+places them under `.github/workflows/`. See
+[workflow-templates](workflow-templates/) and
 [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Support and security

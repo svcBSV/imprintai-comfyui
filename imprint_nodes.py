@@ -36,12 +36,12 @@ except ImportError:
     PBKDF2HMAC = None
 
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 TXID_PATTERN = re.compile(r"^[a-fA-F0-9]{64}$")
 HASH_PATTERN = re.compile(r"^[a-fA-F0-9]{64}$")
 REDUNDANCY_COPIES = {"low": 1, "medium": 3, "high": 5}
-SUPPORTED_STEGO_METHODS = {"imprint-stego-v1", "imprint-stego-v3"}
+SUPPORTED_STEGO_METHODS = {"imprint-stego-v1", "imprint-stego-v3", "imprint-stego-v4"}
 STATUS_POLL_TIMEOUT_SECONDS = 105.0
 STATUS_POLL_INITIAL_DELAY_SECONDS = 1.0
 STATUS_POLL_MAX_DELAY_SECONDS = 8.0
@@ -863,18 +863,73 @@ def _embed_v3_txid(rgba: bytearray, width: int, height: int, txid: str) -> None:
         raise ValueError(err)
     if not TXID_PATTERN.fullmatch(txid):
         raise ValueError("txid must be a 64-character hexadecimal string.")
+    _embed_fixed_qim(rgba, width, height, txid, _V3_MAGIC)
+
+
+def _v4_eligible(rgba: bytearray, width: int, height: int):
+    eligible = set()
+    for tile in _V3_TILE_ORDER[:_V3_SLOT_COUNT]:
+        rect = _v3_cell_rect(width, height, tile)
+        if _v3_activity(rgba, width, rect) < _V3_MIN_ACTIVITY:
+            continue
+        coefficient = _v3_coefficient(rgba, width, rect)
+        safe = True
+        for bit in (0, 1):
+            target = _v3_nearest_target(coefficient, bit)
+            projected, maximum = _v3_projected_coefficient(rgba, width, rect, target)
+            if _v3_bit(projected) != bit or abs(projected - target) > 8 or maximum > 7:
+                safe = False
+                break
+        if safe:
+            eligible.add(tile)
+    return eligible
+
+
+def _v4_admission(eligible) -> Optional[str]:
+    skipped = _V3_SLOT_COUNT - len(eligible)
+    if skipped > 32:
+        return f"V4 has {skipped} unsafe fixed cells; at most 32 may be skipped. Use exact-file authenticity (V1); enlarging alone may not help."
+    for bit in range(_V3_PILOT_BITS + _ROBUST_PAYLOAD_BITS):
+        usable = sum(_v3_tile_for_replica(bit, r, _V3_STRONG_REDUNDANCY) in eligible
+                     for r in range(_V3_STRONG_REDUNDANCY))
+        if usable < 10:
+            return f"V4 requires ten safe votes for every pilot and payload bit; bit {bit} has {usable}. Use exact-file authenticity (V1)."
+    return None
+
+
+def _check_v4_carrier(rgba: bytearray, width: int, height: int) -> Optional[str]:
+    if width < _V3_MIN_DIM or height < _V3_MIN_DIM or len(rgba) != width * height * 4:
+        return "V4 requires complete RGBA pixels at least 512 × 512."
+    return _v4_admission(_v4_eligible(rgba, width, height))
+
+
+def _embed_v4_txid(rgba: bytearray, width: int, height: int, txid: str) -> None:
+    if not TXID_PATTERN.fullmatch(txid):
+        raise ValueError("txid must be a 64-character hexadecimal string.")
+    if width < _V3_MIN_DIM or height < _V3_MIN_DIM or len(rgba) != width * height * 4:
+        raise ValueError("V4 requires complete RGBA pixels at least 512 × 512.")
+    eligible = _v4_eligible(rgba, width, height)
+    err = _v4_admission(eligible)
+    if err:
+        raise ValueError(err)
+    _embed_fixed_qim(rgba, width, height, txid, b"IMV4", eligible)
+
+
+def _embed_fixed_qim(rgba: bytearray, width: int, height: int, txid: str, magic, eligible=None) -> None:
     payload = bytearray(_ROBUST_PAYLOAD_BYTES)
-    payload[:4] = _V3_MAGIC
+    payload[:4] = magic
     for i in range(_ROBUST_TXID_BYTES):
         payload[4 + i] = int(txid[i * 2:i * 2 + 2], 16)
     payload[36:40] = _robust_crc32(bytes(payload[:36])).to_bytes(4, "big")
-    candidates = _v3_candidates(rgba, width, height)
     for bit_index in range(_V3_PILOT_BITS + _ROBUST_PAYLOAD_BITS):
         bit = (bit_index % 2) if bit_index < _V3_PILOT_BITS else (
             payload[(bit_index - _V3_PILOT_BITS) // 8] >> (7 - ((bit_index - _V3_PILOT_BITS) % 8))
         ) & 1
         for replica in range(_V3_STRONG_REDUNDANCY):
-            rect = _v3_cell_rect(width, height, _v3_tile_for_replica(bit_index, replica, _V3_STRONG_REDUNDANCY))
+            tile = _v3_tile_for_replica(bit_index, replica, _V3_STRONG_REDUNDANCY)
+            if eligible is not None and tile not in eligible:
+                continue
+            rect = _v3_cell_rect(width, height, tile)
             target = _v3_nearest_target(_v3_coefficient(rgba, width, rect), bit)
             delta = target - _v3_coefficient(rgba, width, rect)
             x0, x1, y0, y1 = rect
@@ -1414,6 +1469,11 @@ class ImprintLabel:
       It requires at least 512 × 512 pixels and does not
       make an icph1 canonical-pixel-hash claim for transformed derivatives.
 
+    • Sparse-safe robust watermark (imprint-stego-v4) — distinct `IMV4` magic,
+      same fixed eleven votes, but never marks unsafe cells. Requires ten safe
+      cells per bit and at most 32 skipped cells overall. Does not authenticate
+      transformed pixels; smooth/clipped images can still require V1.
+
     Connect `txid` and `anchor_ready` from Imprint - Log Provenance. A pending
     job, skipped anchor, failure, or simulated transaction leaves the image
     unchanged and returns `labelled=False`.
@@ -1429,7 +1489,7 @@ class ImprintLabel:
             },
             "optional": {
                 "stego_method": (
-                    ["imprint-stego-v1", "imprint-stego-v3"],
+                    ["imprint-stego-v1", "imprint-stego-v3", "imprint-stego-v4"],
                     {"default": "imprint-stego-v1"},
                 ),
                 # redundancy only applies to imprint-stego-v1
@@ -1459,7 +1519,7 @@ class ImprintLabel:
         if stego_method not in SUPPORTED_STEGO_METHODS:
             print(
                 f"[Imprint] Image not labelled: unsupported stego method '{stego_method}'. "
-                "Choose imprint-stego-v1 or imprint-stego-v3."
+                "Choose imprint-stego-v1, imprint-stego-v3, or imprint-stego-v4."
             )
             return (image, False)
         normalised_txid = (txid or "").strip().lower()
@@ -1473,14 +1533,14 @@ class ImprintLabel:
         try:
             width, height, rgba, channels = _single_image_to_rgba(image)
 
-            if stego_method == "imprint-stego-v3":
+            if stego_method in ("imprint-stego-v3", "imprint-stego-v4"):
                 # The redundancy dropdown is ignored for the fixed v3 carrier.
-                capacity_error = _check_v3_carrier(rgba, width, height)
+                capacity_error = (_check_v4_carrier if stego_method == "imprint-stego-v4" else _check_v3_carrier)(rgba, width, height)
                 if capacity_error:
                     print(f"[Imprint] Image not labelled: {capacity_error}")
                     return (image, False)
                 try:
-                    _embed_v3_txid(rgba, width, height, normalised_txid)
+                    (_embed_v4_txid if stego_method == "imprint-stego-v4" else _embed_v3_txid)(rgba, width, height, normalised_txid)
                 except ValueError as embed_error:
                     print(f"[Imprint] Image not labelled: {embed_error}")
                     return (image, False)
@@ -1548,7 +1608,7 @@ class ImprintExportC2paPng:
             },
             "optional": {
                 "stego_method": (
-                    ["imprint-stego-v1", "imprint-stego-v3"],
+                    ["imprint-stego-v1", "imprint-stego-v3", "imprint-stego-v4"],
                     {"default": "imprint-stego-v1"},
                 ),
                 # redundancy only applies to imprint-stego-v1
@@ -1583,7 +1643,7 @@ class ImprintExportC2paPng:
         if stego_method not in SUPPORTED_STEGO_METHODS:
             print(
                 f"[Imprint] Labelled PNG not exported: unsupported stego method '{stego_method}'. "
-                "Choose imprint-stego-v1 or imprint-stego-v3."
+                "Choose imprint-stego-v1, imprint-stego-v3, or imprint-stego-v4."
             )
             return ("", False, "")
         normalised_txid = (txid or "").strip().lower()
@@ -1595,7 +1655,7 @@ class ImprintExportC2paPng:
             print("[Imprint] Labelled PNG not exported: no API key provided.")
             return ("", False, "")
 
-        use_v3 = stego_method == "imprint-stego-v3"
+        use_v3 = stego_method in ("imprint-stego-v3", "imprint-stego-v4")
 
         try:
             width, height, rgba, _channels = _single_image_to_rgba(image)
@@ -1603,7 +1663,7 @@ class ImprintExportC2paPng:
             if use_v3:
                 # The server applies the luminance-domain watermark after its
                 # canonical-pixel-hash eligibility check. Send original pixels.
-                capacity_error = _check_v3_carrier(rgba, width, height)
+                capacity_error = (_check_v4_carrier if stego_method == "imprint-stego-v4" else _check_v3_carrier)(rgba, width, height)
                 if capacity_error:
                     print(f"[Imprint] Labelled PNG not exported: {capacity_error}")
                     return ("", False, "")
